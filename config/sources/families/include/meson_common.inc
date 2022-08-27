@@ -1,23 +1,36 @@
 ARCH=armhf
-BOOTSOURCE='https://github.com/hardkernel/u-boot.git'
-BOOTBRANCH='branch:odroidc-v2011.03'
-BOOTDIR='u-boot-odroidc1'
-UBOOT_COMPILER="arm-linux-gnueabihf-"
-UBOOT_USE_GCC='< 4.9'
-SERIALCON="ttyAML0"
-UBOOT_TARGET_MAP=';;sd_fuse/bl1.bin.hardkernel sd_fuse/u-boot.bin'
-SRC_LOADADDR='LOADADDR=0x00208000'
-KERNEL_IMAGE_TYPE=uImage
 LINUXFAMILY=meson
+KERNEL_IMAGE_TYPE=uImage
+SRC_LOADADDR='LOADADDR=0x00208000'
+
+SERIALCON="ttyAML0"
+
 CPUMIN=504000
 CPUMAX=1632000
 GOVERNOR=ondemand
 
+SKIP_BOOTSPLASH="yes"
+
+case $BOARD in
+	odroidc1)
+
+		BOOTDIR='u-boot-odroidc1'
+		BOOTSOURCE='https://github.com/hardkernel/u-boot.git'
+		BOOTBRANCH='branch:odroidc-v2011.03'
+
+		UBOOT_COMPILER="arm-linux-gnueabihf-"
+		UBOOT_USE_GCC='< 4.9'
+
+		UBOOT_TARGET_MAP=';;sd_fuse/bl1.bin.hardkernel sd_fuse/u-boot.bin'
+
+		;;
+esac
+
 case $BRANCH in
 	legacy)
 
-		export KERNEL_MAJOR_MINOR="5.11" # Major and minor versions of this kernel.
-		KERNELBRANCH="branch:linux-5.11.y"
+		export KERNEL_MAJOR_MINOR="5.10" # Major and minor versions of this kernel.
+		KERNELBRANCH="branch:linux-5.10.y"
 		KERNELPATCHDIR='meson-'$BRANCH
 
 		BUILD_DESKTOP=no
@@ -25,8 +38,8 @@ case $BRANCH in
 		;;
 	current)
 
-		export KERNEL_MAJOR_MINOR="5.14" # Major and minor versions of this kernel.
-		KERNELBRANCH="branch:linux-5.14.y"
+		export KERNEL_MAJOR_MINOR="5.15" # Major and minor versions of this kernel.
+		KERNELBRANCH="branch:linux-5.15.y"
 		KERNELPATCHDIR='meson-'$BRANCH
 
 		BUILD_DESKTOP=no
@@ -37,21 +50,8 @@ case $BRANCH in
 		KERNELDIR='linux-meson'
 		KERNELSOURCE='https://github.com/xdarklight/linux'
 		export KERNEL_MAJOR_MINOR="5.18" # Major and minor versions of this kernel.
-		KERNELBRANCH="branch:meson-mx-integration-5.18-20220417"
+		KERNELBRANCH="branch:meson-mx-integration-5.18-20220516"
 		KERNELPATCHDIR='meson-'$BRANCH
-
-		;;
-esac
-
-case $BOARD in
-	odroidc1)
-
-		BOOTSCRIPT="boot-odroid-c1.ini:boot.ini"
-
-		;;
-	onecloud)
-
-		BOOTSCRIPT="boot-onecloud.cmd:boot.cmd"
 
 		;;
 esac
