@@ -139,6 +139,9 @@ function prepare_extra_kernel_drivers() {
 		sed -i '/source "drivers\/net\/wireless\/ti\/Kconfig"/a source "drivers\/net\/wireless\/rtl8189es\/Kconfig"' \
 			"$kerneldir/drivers/net/wireless/Kconfig"
 
+		# add support for 5.19.2
+		process_patch_file "${SRC}/patch/misc/wireless-rtl8189es-5.19.2.patch" "applying"
+
 	fi
 
 	# Wireless drivers for Realtek 8189FS chipsets
@@ -171,6 +174,9 @@ function prepare_extra_kernel_drivers() {
 		echo "obj-\$(CONFIG_RTL8189FS) += rtl8189fs/" >> "$kerneldir/drivers/net/wireless/Makefile"
 		sed -i '/source "drivers\/net\/wireless\/ti\/Kconfig"/a source "drivers\/net\/wireless\/rtl8189fs\/Kconfig"' \
 			"$kerneldir/drivers/net/wireless/Kconfig"
+
+		# add support for 5.19.2
+		process_patch_file "${SRC}/patch/misc/wireless-rtl8189fs-5.19.2.patch" "applying"
 
 	fi
 
@@ -213,7 +219,7 @@ function prepare_extra_kernel_drivers() {
 		# @TODO: fasthash for this is... ? remote git hash?
 
 		# attach to specifics tag or branch
-		local rtl8812auver="branch:v5.6.4.2"
+		local rtl8812auver="commit:41532e3b16dcf27f06e6fe5a26314f3aa24d4f87"
 
 		display_alert "Adding" "Wireless drivers for Realtek 8811, 8812, 8814 and 8821 chipsets ${rtl8812auver}" "info"
 
@@ -236,6 +242,9 @@ function prepare_extra_kernel_drivers() {
 		echo "obj-\$(CONFIG_88XXAU) += rtl8812au/" >> "$kerneldir/drivers/net/wireless/Makefile"
 		sed -i '/source "drivers\/net\/wireless\/ti\/Kconfig"/a source "drivers\/net\/wireless\/rtl8812au\/Kconfig"' \
 			"$kerneldir/drivers/net/wireless/Kconfig"
+
+		# add support for 5.19.2
+		process_patch_file "${SRC}/patch/misc/wireless-rtl8812au-5.19.2.patch" "applying"
 
 	fi
 
@@ -313,6 +322,9 @@ function prepare_extra_kernel_drivers() {
 		# add support for 5.18.y
 		process_patch_file "${SRC}/patch/misc/wireless-rtl8821cu.patch" "applying"
 
+		# add support for 5.19.2
+		process_patch_file "${SRC}/patch/misc/wireless-rtl8811cu-5.19.2.patch" "applying"
+
 	fi
 
 	# Wireless drivers for Realtek 8188EU 8188EUS and 8188ETV chipsets
@@ -365,7 +377,7 @@ function prepare_extra_kernel_drivers() {
 		# @TODO: fasthash for this is... ? remote git hash?
 
 		# attach to specifics tag or branch
-		local rtl88x2buver="branch:5.8.7.1_35809.20191129_COEX20191120-7777"
+		local rtl88x2buver="branch:fix-6.0"
 
 		display_alert "Adding" "Wireless drivers for Realtek 88x2bu chipsets ${rtl88x2buver}" "info"
 
@@ -479,6 +491,7 @@ function prepare_extra_kernel_drivers() {
 		sed -i '/source "drivers\/net\/wireless\/ti\/Kconfig"/a source "drivers\/net\/wireless\/rtl8723ds\/Kconfig"' \
 			"$kerneldir/drivers/net/wireless/Kconfig"
 
+		process_patch_file "${SRC}/patch/misc/wireless-rtl8723ds-5.19.2.patch" "applying"
 	fi
 
 	# Wireless drivers for Realtek 8723DU chipsets
@@ -486,12 +499,7 @@ function prepare_extra_kernel_drivers() {
 	if linux-version compare $version ge 5.0 && [ "$EXTRAWIFI" == yes ]; then
 		# @TODO: fasthash for this is... ? remote git hash?
 
-		# attach to specifics tag or branch
-		if linux-version compare $version ge 5.12; then
-			local rtl8723duver="branch:v5.13.4"
-		else
-			local rtl8723duver="branch:master"
-		fi
+		local rtl8723duver="branch:master"
 
 		display_alert "Adding" "Wireless drivers for Realtek 8723DU chipsets ${rtl8723duver}" "info"
 
@@ -515,7 +523,7 @@ function prepare_extra_kernel_drivers() {
 		sed -i '/source "drivers\/net\/wireless\/ti\/Kconfig"/a source "drivers\/net\/wireless\/rtl8723du\/Kconfig"' \
 			$kerneldir/drivers/net/wireless/Kconfig
 
-		process_patch_file "${SRC}/patch/misc/wireless-rtl8723du.patch" "applying"
+		process_patch_file "${SRC}/patch/misc/wireless-rtl8723du-5.19.2.patch" "applying"
 	fi
 
 	# Wireless drivers for Realtek 8822BS chipsets

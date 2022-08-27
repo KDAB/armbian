@@ -2,6 +2,11 @@
 # Linux splash file
 #
 function apply_kernel_patches_for_bootsplash() {
+	# disable it.
+	# todo: cleanup logo generation code and bring in plymouth
+	# @TODO: rpardini: so, can we completely remove this?
+	SKIP_BOOTSPLASH=yes
+
 	# previously: if linux-version compare "${version}" ge 5.10 && [ $SKIP_BOOTSPLASH != yes ]; then
 	[[ "${SKIP_BOOTSPLASH}" == "yes" ]] && return 0
 	linux-version compare "${version}" le 5.10 && return 0
@@ -11,6 +16,11 @@ function apply_kernel_patches_for_bootsplash() {
 
 	if linux-version compare "${version}" ge 5.11; then
 		process_patch_file "${SRC}/patch/misc/bootsplash-5.16.y-0000-Revert-fbcon-Avoid-cap-set-but-not-used-warning.patch" "applying"
+	fi
+
+	if (linux-version compare "${version}" ge 5.18.18 && linux-version compare "${version}" lt 5.19) ||
+		(linux-version compare "${version}" ge 5.15.61 && linux-version compare "${version}" lt 5.16); then
+		process_patch_file "${SRC}/patch/misc/0001-Revert-fbcon-Fix-accelerated-fbdev-scrolling-while-logo-is-still-shown.patch" "applying"
 	fi
 
 	process_patch_file "${SRC}/patch/misc/bootsplash-5.16.y-0001-Revert-fbcon-Add-option-to-enable-legacy-hardware-ac.patch" "applying"
