@@ -47,10 +47,8 @@ case $BRANCH in
 		;;
 	edge)
 
-		KERNELDIR='linux-meson'
-		KERNELSOURCE='https://github.com/xdarklight/linux'
 		export KERNEL_MAJOR_MINOR="5.18" # Major and minor versions of this kernel.
-		KERNELBRANCH="branch:meson-mx-integration-5.18-20220516"
+		KERNELBRANCH="branch:linux-5.18.y"
 		KERNELPATCHDIR='meson-'$BRANCH
 
 		;;
