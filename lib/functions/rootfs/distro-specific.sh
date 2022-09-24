@@ -2,11 +2,10 @@ install_distribution_specific() {
 	display_alert "Applying distribution specific tweaks for" "$RELEASE" "info"
 
 	case $RELEASE in
-		buster | sid)
-			# remove doubled uname from motd
-			[[ -f "${SDCARD}"/etc/update-motd.d/10-uname ]] && rm "${SDCARD}"/etc/update-motd.d/10-uname
-			# rc.local is not existing but one might need it
-			install_rclocal
+		sid)
+			# (temporally) disable broken service
+			chroot_sdcard "systemctl --no-reload disable smartmontools.service"
+
 			;;
 
 		bullseye)
@@ -23,30 +22,13 @@ install_distribution_specific() {
 			# by using default lz4 initrd compression leads to corruption, go back to proven method
 			sed -i "s/^COMPRESS=.*/COMPRESS=gzip/" "${SDCARD}"/etc/initramfs-tools/initramfs.conf
 
-			# cleanup motd services and related files
-			chroot "${SDCARD}" /bin/bash -c "systemctl disable  motd-news.service >/dev/null 2>&1"
-			chroot "${SDCARD}" /bin/bash -c "systemctl disable  motd-news.timer >/dev/null 2>&1"
-
-			rm -f "${SDCARD}"/etc/update-motd.d/{10-uname,10-help-text,50-motd-news,80-esm,80-livepatch,90-updates-available,91-release-upgrade,95-hwe-eol}
-
-			# remove motd news from motd.ubuntu.com
-			[[ -f "${SDCARD}"/etc/default/motd-news ]] && sed -i "s/^ENABLED=.*/ENABLED=0/" "${SDCARD}"/etc/default/motd-news
-
-			# rc.local is not existing but one might need it
-			install_rclocal
+			run_host_command_logged rm -fv "${SDCARD}"/etc/update-motd.d/{10-uname,10-help-text,50-motd-news,80-esm,80-livepatch,90-updates-available,91-release-upgrade,95-hwe-eol}
 
 			if [ -d "${SDCARD}"/etc/NetworkManager ]; then
 				local RENDERER=NetworkManager
 			else
 				local RENDERER=networkd
 			fi
-
-			# Basic Netplan config. Let NetworkManager/networkd manage all devices on this system
-			[[ -d "${SDCARD}"/etc/netplan ]] && cat <<- EOF > "${SDCARD}"/etc/netplan/armbian-default.yaml
-				network:
-				  version: 2
-				  renderer: $RENDERER
-			EOF
 
 			# DNS fix
 			if [ -n "$NAMESERVER" ]; then
@@ -66,6 +48,26 @@ install_distribution_specific() {
 			chroot "${SDCARD}" /bin/bash -c "systemctl --no-reload mask ondemand.service >/dev/null 2>&1"
 			;;
 	esac
+
+	# Basic Netplan config. Let NetworkManager/networkd manage all devices on this system
+	[[ -d "${SDCARD}"/etc/netplan ]] && cat <<- EOF > "${SDCARD}"/etc/netplan/armbian-default.yaml
+		network:
+		  version: 2
+		  renderer: $RENDERER
+	EOF
+
+	# cleanup motd services and related files
+	chroot_sdcard systemctl disable motd-news.service
+	chroot_sdcard systemctl disable motd-news.timer
+
+	# remove motd news from motd.ubuntu.com
+	[[ -f "${SDCARD}"/etc/default/motd-news ]] && sed -i "s/^ENABLED=.*/ENABLED=0/" "${SDCARD}"/etc/default/motd-news
+
+	# remove doubled uname from motd
+	[[ -f "${SDCARD}"/etc/update-motd.d/10-uname ]] && rm "${SDCARD}"/etc/update-motd.d/10-uname
+
+	# rc.local is not existing but one might need it
+	install_rclocal
 
 	# use list modules INITRAMFS
 	if [ -f "${SRC}"/config/modules/"${MODULES_INITRD}" ]; then

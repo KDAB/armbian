@@ -11,6 +11,15 @@
 
 function prepare_extra_kernel_drivers() {
 	#
+	# Returning headers needed for some wireless drivers
+	#
+
+	if linux-version compare "${version}" ge 5.4 && [ $EXTRAWIFI == yes ]; then
+		display_alert "Adding" "Missing headers" "info" # @TODO: which headers?
+		process_patch_file "${SRC}/patch/misc/wireless-bring-back-headers.patch" "applying"
+	fi
+
+	#
 	# mac80211 wireless driver injection features from Kali Linux
 	#
 
@@ -254,20 +263,20 @@ function prepare_extra_kernel_drivers() {
 
 		display_alert "Adding" "Wireless drivers for Xradio XR819 chipsets" "info"
 
-		fetch_from_repo "https://github.com/karabek/xradio" "xradio" "branch:master" "yes"
+		fetch_from_repo "$GITHUB_SOURCE/dbeinder/xradio" "xradio" "branch:karabek_rebase" "yes"
 		cd "$kerneldir" || exit
 		rm -rf "$kerneldir/drivers/net/wireless/xradio"
 		mkdir -p "$kerneldir/drivers/net/wireless/xradio/"
-		cp "${SRC}"/cache/sources/xradio/master/*.{h,c} \
+		cp "${SRC}"/cache/sources/xradio/karabek_rebase/*.{h,c} \
 			"$kerneldir/drivers/net/wireless/xradio/"
 
 		# Makefile
-		cp "${SRC}/cache/sources/xradio/master/Makefile" \
+		cp "${SRC}/cache/sources/xradio/karabek_rebase/Makefile" \
 			"$kerneldir/drivers/net/wireless/xradio/Makefile"
 
 		# Kconfig
-		sed -i 's/---help---/help/g' "${SRC}/cache/sources/xradio/master/Kconfig"
-		cp "${SRC}/cache/sources/xradio/master/Kconfig" \
+		sed -i 's/---help---/help/g' "${SRC}/cache/sources/xradio/karabek_rebase/Kconfig"
+		cp "${SRC}/cache/sources/xradio/karabek_rebase/Kconfig" \
 			"$kerneldir/drivers/net/wireless/xradio/Kconfig"
 
 		# Add to section Makefile
@@ -279,6 +288,10 @@ function prepare_extra_kernel_drivers() {
 		# add support for K5.13+
 		process_patch_file "${SRC}/patch/misc/wireless-xradio-5.13.patch" "applying"
 
+		# add support for aarch64
+		if [[ $ARCH == arm64 ]]; then
+			process_patch_file "${SRC}/patch/misc/wireless-xradio-aarch64.patch" "applying"
+		fi
 	fi
 
 	# Wireless drivers for Realtek RTL8811CU and RTL8821C chipsets
@@ -377,7 +390,7 @@ function prepare_extra_kernel_drivers() {
 		# @TODO: fasthash for this is... ? remote git hash?
 
 		# attach to specifics tag or branch
-		local rtl88x2buver="branch:fix-6.0"
+		local rtl88x2buver="commit:00f51d93fe8309b0e23782ad621a038c98c7f031"
 
 		display_alert "Adding" "Wireless drivers for Realtek 88x2bu chipsets ${rtl88x2buver}" "info"
 
@@ -499,7 +512,12 @@ function prepare_extra_kernel_drivers() {
 	if linux-version compare $version ge 5.0 && [ "$EXTRAWIFI" == yes ]; then
 		# @TODO: fasthash for this is... ? remote git hash?
 
-		local rtl8723duver="branch:master"
+		# attach to specifics tag or branch
+		if linux-version compare $version ge 5.12; then
+			local rtl8723duver="branch:v5.13.4"
+		else
+			local rtl8723duver="branch:master"
+		fi
 
 		display_alert "Adding" "Wireless drivers for Realtek 8723DU chipsets ${rtl8723duver}" "info"
 

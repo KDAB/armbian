@@ -1,42 +1,42 @@
-function webseed() {
+function get_urls() {
+	local catalog=$1
+	local filename=$2
 
-	# list of mirrors that host our files
-	unset text
-	local CCODE=$(curl -s redirect.armbian.com/geoip | jq '.continent.code' -r)
+	case $catalog in
+		toolchain)
+			local CCODE=$(curl --silent --fail https://dl.armbian.com/geoip | jq '.continent.code' -r)
+			local urls=(
+				# "https://dl.armbian.com/_toolchain/${filename}"
 
-	if [[ "$2" == rootfs* ]]; then
-		WEBSEED=($(curl -s ${1}mirrors | jq -r '.'${CCODE}' | .[] | values'))
-	else
-		WEBSEED=($(curl -s https://redirect.armbian.com/mirrors | jq -r '.'${CCODE}' | .[] | values'))
-	fi
+				$(
+					curl --silent --fail "https://dl.armbian.com/mirrors" |
+						jq -r "(${CCODE:+.${CCODE} // } .default) | .[]" |
+						sed "s#\$#/_toolchain/${filename}#"
+				)
+			)
+			;;
 
-	# remove dead mirrors to suppress download errors
-	while read -r line; do
-		REMOVE=$(echo $line | egrep -o 'https?://[^ ]+/')
-		WEBSEED=("${WEBSEED[@]/$REMOVE/}")
-	done < <(
-		for k in ${WEBSEED[@]}; do
-			echo "$k$2/$3"
-		done | parallel --halt soon,fail=10 --jobs 32 wget -q --spider --timeout=15 --tries=4 --retry-connrefused {} 2>&1 > /dev/null
-	)
+		rootfs)
+			local CCODE=$(curl --silent --fail https://cache.armbian.com/geoip | jq '.continent.code' -r)
+			local urls=(
+				# "https://cache.armbian.com/rootfs/${ROOTFSCACHE_VERSION}/${filename}"
+				"https://github.com/armbian/cache/releases/download/${ROOTFSCACHE_VERSION}/${filename}"
 
-	# aria2 simply split chunks based on sources count not depending on download speed
-	# when selecting china mirrors, use only China mirror, others are very slow there
-	if [[ $DOWNLOAD_MIRROR == china ]]; then
-		WEBSEED=(
-			https://mirrors.tuna.tsinghua.edu.cn/armbian-releases/
-		)
-	elif [[ $DOWNLOAD_MIRROR == bfsu ]]; then
-		WEBSEED=(
-			https://mirrors.bfsu.edu.cn/armbian-releases/
-		)
-	fi
+				$(
+					curl --silent --fail "https://cache.armbian.com/mirrors" |
+						jq -r "(${CCODE:+.${CCODE} // } .default) | .[]" |
+						sed "s#\$#/rootfs/${ROOTFSCACHE_VERSION}/${filename}#"
+				)
+			)
+			;;
 
-	for toolchain in ${WEBSEED[@]}; do
-		text="${text} ${toolchain}"$2/"${3}"
-	done
-	text="${text:1}"
-	echo "${text}"
+		*)
+			exit_with_error "Unknown catalog" "$catalog" >&2
+			return
+			;;
+	esac
+
+	echo "${urls[@]}"
 }
 
 # Terrible idea, this runs download_and_verify_internal() with error handling disabled.
@@ -45,99 +45,100 @@ function download_and_verify() {
 }
 
 function download_and_verify_internal() {
-	local remotedir=$1
+
+	local catalog=$1
 	local filename=$2
-	local localdir=$SRC/cache/${remotedir//_/}
-	local dirname=${filename//.tar.xz/}
-	[[ -z $DISABLE_IPV6 ]] && DISABLE_IPV6="true"
+	local localdir=$SRC/cache/$catalog
 
-	local server=${ARMBIAN_MIRROR}
-	if [[ $DOWNLOAD_MIRROR == china ]]; then
-		server="https://mirrors.tuna.tsinghua.edu.cn/armbian-releases/"
-	elif [[ $DOWNLOAD_MIRROR == bfsu ]]; then
-		server="https://mirrors.bfsu.edu.cn/armbian-releases/"
-	fi
+	local keys=(
+		"8F427EAF" # Linaro Toolchain Builder
+		"9F0E78D5" # Igor Pecovnik
+	)
 
-	if [[ "x${server}x" == "xx" ]]; then
-		display_alert "ARMBIAN_MIRROR is not set, nor valid DOWNLOAD_MIRROR" "not downloading '${filename}'" "debug"
-		return 0
-	fi
+	local aria2_options=(
+		# Display
+		--console-log-level=error
+		--summary-interval=0
+		--download-result=hide
 
-	if [[ -f ${localdir}/${dirname}/.download-complete ]]; then
-		return 0
-	fi
+		# Meta
+		--server-stat-if="${SRC}/cache/.aria2/server_stats"
+		--server-stat-of="${SRC}/cache/.aria2/server_stats"
+		--dht-file-path="${SRC}/cache/.aria2/dht.dat"
+		--rpc-save-upload-metadata=false
+		--auto-save-interval=0
 
-	# rootfs has its own infra
-	if [[ "${remotedir}" == "_rootfs" ]]; then
-		local server="https://cache.armbian.com/"
-		remotedir="rootfs/$ROOTFSCACHE_VERSION"
-	fi
+		# File
+		--auto-file-renaming=false
+		--allow-overwrite=true
+		--file-allocation=trunc
 
-	# switch to china mirror if US timeouts
-	timeout 10 curl --head --fail --silent "${server}${remotedir}/${filename}"
-	if [[ $? -ne 7 && $? -ne 22 && $? -ne 0 ]]; then
-		display_alert "Timeout from $server" "retrying" "info"
-		server="https://mirrors.tuna.tsinghua.edu.cn/armbian-releases/"
+		# Connection
+		--disable-ipv6=$DISABLE_IPV6
+		--connect-timeout=10
+		--timeout=10
+		--allow-piece-length-change=true
+		--max-connection-per-server=2
+		--lowest-speed-limit=500K
 
-		# switch to another china mirror if tuna timeouts
-		timeout 10 curl --head --fail --silent ${server}${remotedir}/${filename}
-		if [[ $? -ne 7 && $? -ne 22 && $? -ne 0 ]]; then
-			display_alert "Timeout from $server" "retrying" "info"
-			server="https://mirrors.bfsu.edu.cn/armbian-releases/"
-		fi
-	fi
+		# BT
+		--seed-time=0
+		--bt-stop-timeout=30
+	)
 
-	# check if file exists on remote server before running aria2 downloader
-	[[ ! $(timeout 10 curl --head --fail --silent ${server}${remotedir}/${filename}) ]] && return
-
-	cd "${localdir}" || exit
-
-	# use local control file
-	if [[ -f "${SRC}"/config/torrents/${filename}.asc ]]; then
-		local torrent="${SRC}"/config/torrents/${filename}.torrent
+	# use local signature file
+	if [[ -f "${SRC}/config/torrents/${filename}.asc" ]]; then
+		local torrent="${SRC}/config/torrents/${filename}.torrent"
 		ln -sf "${SRC}/config/torrents/${filename}.asc" "${localdir}/${filename}.asc"
-	elif [[ ! $(timeout 10 curl --head --fail --silent "${server}${remotedir}/${filename}.asc") ]]; then
-		return
 	else
-		# download control file
-		local torrent=${server}$remotedir/${filename}.torrent
-		run_host_command_logged aria2c --download-result=hide --disable-ipv6=${DISABLE_IPV6} --summary-interval=0 --console-log-level=error --auto-file-renaming=false \
-			--continue=false --allow-overwrite=true --dir="${localdir}" ${server}${remotedir}/${filename}.asc $(webseed "$remotedir/${filename}.asc") -o "${filename}.asc"
-		[[ $? -ne 0 ]] && display_alert "Failed to download control file" "" "wrn"
+		# download signature file
+		aria2c "${aria2_options[@]}" \
+			--continue=false \
+			--dir="${localdir}" --out="${filename}.asc" \
+			$(get_urls "${catalog}" "${filename}.asc")
+
+		local rc=$?
+		if [[ $rc -ne 0 ]]; then
+			# Except `not found`
+			[[ $rc -ne 3 ]] && display_alert "Failed to download signature file. aria2 exit code:" "$rc" "wrn"
+			return $rc
+		fi
+
+		[[ ${USE_TORRENT} == "yes" ]] &&
+			local torrent="$(get_urls "${catalog}" "${filename}.torrent")"
 	fi
 
 	# download torrent first
+	local direct=yes
 	if [[ ${USE_TORRENT} == "yes" ]]; then
-		display_alert "downloading using torrent network" "$filename"
-		local ariatorrent="--summary-interval=0 --auto-save-interval=0 --seed-time=0 --bt-stop-timeout=120 --console-log-level=error \
-		--allow-overwrite=true --download-result=hide --rpc-save-upload-metadata=false --auto-file-renaming=false \
-		--file-allocation=trunc --continue=true ${torrent} \
-		--dht-file-path=${SRC}/cache/.aria2/dht.dat --disable-ipv6=${DISABLE_IPV6} --stderr --follow-torrent=mem --dir=$localdir"
 
-		# exception. It throws error if dht.dat file does not exists. Error suppress needed only at first download.
-		if [[ -f "${SRC}"/cache/.aria2/dht.dat ]]; then
-			# shellcheck disable=SC2086
-			run_host_command_logged aria2c ${ariatorrent}
-		else
-			# shellcheck disable=SC2035
-			run_host_command_logged aria2c ${ariatorrent}
-		fi
-		# mark complete
-		touch "${localdir}/${filename}.complete"
+		display_alert "downloading using torrent network" "$filename"
+		aria2c "${aria2_options[@]}" \
+			--follow-torrent=mem \
+			--dir="${localdir}" \
+			${torrent}
+
+		[[ $? -eq 0 ]] && direct=no
+
 	fi
 
 	# direct download if torrent fails
-	if [[ ! -f "${localdir}/${filename}.complete" ]]; then
-		if [[ ! $(timeout 10 curl --head --fail --silent ${server}${remotedir}/${filename} 2>&1 > /dev/null) ]]; then
-			display_alert "downloading from $(echo $server | cut -d'/' -f3 | cut -d':' -f1) using http(s) network" "$filename"
-			run_host_command_logged aria2c --allow-overwrite=true  --download-result=hide --rpc-save-upload-metadata=false --console-log-level=error \
-				--dht-file-path="${SRC}"/cache/.aria2/dht.dat --disable-ipv6=${DISABLE_IPV6} --summary-interval=0 --auto-file-renaming=false --dir="${localdir}" ${server}${remotedir}/${filename} $(webseed "${remotedir}/${filename}") -o "${filename}"
-			# mark complete
-			[[ $? -eq 0 ]] && touch "${localdir}/${filename}.complete" && echo ""
+	if [[ $direct != "no" ]]; then
+		display_alert "downloading using http(s) network" "$filename"
+		aria2c "${aria2_options[@]}" \
+			--dir="${localdir}" --out="${filename}" \
+			$(get_urls "${catalog}" "${filename}")
 
+		local rc=$?
+		if [[ $rc -ne 0 ]]; then
+			display_alert "Failed to download. aria2 exit code:" "$rc" "wrn"
+			return $rc
 		fi
+
+		echo ""
 	fi
 
+	local verified=false
 	if [[ -f ${localdir}/${filename}.asc ]]; then
 
 		if grep -q 'BEGIN PGP SIGNATURE' "${localdir}/${filename}.asc"; then
@@ -149,42 +150,31 @@ function download_and_verify_internal() {
 				chmod 600 "${SRC}"/cache/.gpg/gpg.conf
 			fi
 
-			# Verify archives with Linaro and Armbian GPG keys
+			for key in "${keys[@]}"; do
+				gpg --homedir "${SRC}/cache/.gpg" --no-permission-warning \
+					--list-keys "${key}" >> "${DEST}/${LOG_SUBPATH}/output.log" 2>&1 ||
+					gpg --homedir "${SRC}/cache/.gpg" --no-permission-warning \
+						${http_proxy:+--keyserver-options http-proxy="${http_proxy}"} \
+						--keyserver "hkp://keyserver.ubuntu.com:80" \
+						--recv-keys "${key}" >> "${DEST}/${LOG_SUBPATH}/output.log" 2>&1 ||
+					exit_with_error "Failed to recieve key" "${key}"
+			done
 
-			if [ x"" != x"${http_proxy}" ]; then
-				(gpg --homedir "${SRC}"/cache/.gpg --no-permission-warning --list-keys 8F427EAF || gpg --homedir "${SRC}"/cache/.gpg --no-permission-warning \
-					--keyserver hkp://keyserver.ubuntu.com:80 --keyserver-options http-proxy="${http_proxy}" \
-					--recv-keys 8F427EAF)
-
-				(gpg --homedir "${SRC}"/cache/.gpg --no-permission-warning --list-keys 9F0E78D5 || gpg --homedir "${SRC}"/cache/.gpg --no-permission-warning \
-					--keyserver hkp://keyserver.ubuntu.com:80 --keyserver-options http-proxy="${http_proxy}" \
-					--recv-keys 9F0E78D5)
-			else
-				(gpg --homedir "${SRC}"/cache/.gpg --no-permission-warning --list-keys 8F427EAF || gpg --homedir "${SRC}"/cache/.gpg --no-permission-warning \
-					--keyserver hkp://keyserver.ubuntu.com:80 \
-					--recv-keys 8F427EAF)
-
-				(gpg --homedir "${SRC}"/cache/.gpg --no-permission-warning --list-keys 9F0E78D5 || gpg --homedir "${SRC}"/cache/.gpg --no-permission-warning \
-					--keyserver hkp://keyserver.ubuntu.com:80 \
-					--recv-keys 9F0E78D5)
-			fi
-
-			gpg --homedir "${SRC}"/cache/.gpg --no-permission-warning --verify --trust-model always -q "${localdir}/${filename}.asc"
+			gpg --homedir "${SRC}"/cache/.gpg --no-permission-warning --trust-model always \
+				-q --verify "${localdir}/${filename}.asc" >> "${DEST}/${LOG_SUBPATH}/output.log" 2>&1
 			[[ ${PIPESTATUS[0]} -eq 0 ]] && verified=true && display_alert "Verified" "PGP" "info"
+
 		else
-			md5sum -c --status "${localdir}/${filename}.asc" && verified=true && display_alert "Verified" "MD5" "info"
+
+			[[ "$(md5sum "${localdir}/${filename}" | awk '{printf $1}')" == "$(awk '{printf $1}' ${localdir}/${filename}.asc)" ]] &&
+				verified=true && display_alert "Verified" "MD5" "info"
+
 		fi
 
-		if [[ $verified == true ]]; then
-			if [[ "${filename:(-6)}" == "tar.xz" ]]; then
-				display_alert "decompressing"
-				pv -p -b -r -c -N "$(logging_echo_prefix_for_pv "decompress") ${filename}" "${filename}" |
-					xz -dc |
-					tar xp --xattrs --no-same-owner --overwrite &&
-					touch "${localdir}/${dirname}/.download-complete"
-			fi
-		else
+		if [[ $verified != true ]]; then
+			rm -rf "${localdir}/${filename}"* # We also delete asc file
 			exit_with_error "verification failed"
 		fi
+
 	fi
 }

@@ -170,10 +170,11 @@ function interactive_config_ask_release() {
 
 function interactive_config_ask_desktop_build() {
 	# don't show desktop option if we choose minimal build
-	[[ $BUILD_MINIMAL == yes ]] && BUILD_DESKTOP=no
+	[[ $HAS_VIDEO_OUTPUT == no || $BUILD_MINIMAL == yes ]] && BUILD_DESKTOP=no
 
 	[[ $KERNEL_ONLY == yes ]] && return 0
 	[[ -n ${BUILD_DESKTOP} ]] && return 0
+
 	# read distribution support status which is written to the armbian-release file
 	set_distribution_status
 	options=()

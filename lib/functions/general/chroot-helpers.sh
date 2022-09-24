@@ -5,6 +5,7 @@
 mount_chroot() {
 
 	local target=$1
+	mount -t tmpfs tmpfs "${target}/tmp"
 	mount -t proc chproc "${target}"/proc
 	mount -t sysfs chsys "${target}"/sys
 	mount -t devtmpfs chdev "${target}"/dev || mount --bind /dev "${target}"/dev
@@ -19,10 +20,11 @@ mount_chroot() {
 umount_chroot() {
 	local target=$1
 	display_alert "Unmounting" "$target" "info"
-	while grep -Eq "${target}.*(dev|proc|sys)" /proc/mounts; do
+	while grep -Eq "${target}.*(dev|proc|sys|tmp)" /proc/mounts; do
 		umount --recursive "${target}"/dev > /dev/null 2>&1 || true
 		umount "${target}"/proc > /dev/null 2>&1 || true
 		umount "${target}"/sys > /dev/null 2>&1 || true
+		umount "${target}"/tmp > /dev/null 2>&1 || true
 		sync
 	done
 }

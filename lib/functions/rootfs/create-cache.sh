@@ -1,11 +1,5 @@
 # this gets from cache or produces a new rootfs, and leaves a mounted chroot "$SDCARD" at the end.
 get_or_create_rootfs_cache_chroot_sdcard() {
-	if [[ "$ROOT_FS_CREATE_ONLY" == "yes" ]]; then
-		local cycles=1
-	else
-		local cycles=3
-	fi
-
 	# @TODO: this was moved from configuration to this stage, that way configuration can be offline
 	# if variable not provided, check which is current version in the cache storage in GitHub.
 	if [[ -z "${ROOTFSCACHE_VERSION}" ]]; then
@@ -15,67 +9,60 @@ get_or_create_rootfs_cache_chroot_sdcard() {
 		ROOTFSCACHE_VERSION=${ROOTFSCACHE_VERSION:-$(curl -L --silent https://cache.armbian.com/rootfs/latest --fail)}
 	fi
 
-	INITIAL_ROOTFSCACHE_VERSION=$ROOTFSCACHE_VERSION
+	local packages_hash=$(get_package_list_hash)
+	local packages_hash=${packages_hash:0:8}
+
+	local cache_type="cli"
+	[[ ${BUILD_DESKTOP} == yes ]] && local cache_type="xfce-desktop"
+	[[ -n ${DESKTOP_ENVIRONMENT} ]] && local cache_type="${DESKTOP_ENVIRONMENT}"
+	[[ ${BUILD_MINIMAL} == yes ]] && local cache_type="minimal"
 
 	# seek last cache, proceed to previous otherwise build it
-	for ((n = 0; n < cycles; n++)); do
+	local cache_list
+	readarray -t cache_list <<< "$(get_rootfs_cache_list "$cache_type" "$packages_hash" | sort -r)"
+	for ROOTFSCACHE_VERSION in "${cache_list[@]}"; do
 
-		ROOTFSCACHE_VERSION=$(expr $INITIAL_ROOTFSCACHE_VERSION - $n)
-		ROOTFSCACHE_VERSION=$(printf "%04d\n" ${ROOTFSCACHE_VERSION})
-
-		local packages_hash=$(get_package_list_hash "$ROOTFSCACHE_VERSION")
-		local cache_type="cli"
-		[[ ${BUILD_DESKTOP} == yes ]] && local cache_type="xfce-desktop"
-		[[ -n ${DESKTOP_ENVIRONMENT} ]] && local cache_type="${DESKTOP_ENVIRONMENT}"
-		[[ ${BUILD_MINIMAL} == yes ]] && local cache_type="minimal"
-		local cache_name=${RELEASE}-${cache_type}-${ARCH}.$packages_hash.tar.zst
+		local cache_name=${ARCH}-${RELEASE}-${cache_type}-${packages_hash}-${ROOTFSCACHE_VERSION}.tar.zst
 		local cache_fname=${SRC}/cache/rootfs/${cache_name}
-		local display_name=${RELEASE}-${cache_type}-${ARCH}.${packages_hash:0:3}...${packages_hash:29}.tar.zst
 
 		[[ "$ROOT_FS_CREATE_ONLY" == yes ]] && break
 
-		if [[ -f ${cache_fname} && -f ${cache_fname}.aria2 ]]; then
-			rm ${cache_fname}*
-			display_alert "Partially downloaded file. Re-start."
-			download_and_verify "_rootfs" "$cache_name"
+		display_alert "Checking cache" "$cache_name" "info"
+
+		# if aria2 file exists download didn't succeeded
+		if [[ ! -f $cache_fname || -f ${cache_fname}.aria2 ]]; then
+			display_alert "Downloading from servers"
+			download_and_verify "rootfs" "$cache_name" ||
+				continue
 		fi
 
-		display_alert "Checking local cache" "$display_name" "info"
-
-		if [[ -f $cache_fname ]]; then
-			break
-		else
-			display_alert "searching on servers"
-			download_and_verify "_rootfs" "$cache_name"
-			[[ -f ${cache_fname} ]] && break
-		fi
-
-		if [[ ! -f $cache_fname ]]; then
-			display_alert "not found: try to use previous cache"
-		fi
-
+		[[ -f $cache_fname && ! -f ${cache_fname}.aria2 ]] && break
 	done
 
-	# check if cache exists and we want to make it
-	if [[ -f ${cache_fname} && "$ROOT_FS_CREATE_ONLY" == "yes" ]]; then
-		display_alert "Checking cache integrity" "$display_name" "info"
-		zstd -tqq ${cache_fname} || {
-			rm $cache_fname
-			exit_with_error "Cache $cache_fname is corrupted and was deleted. Please restart!"
-		}
-	fi
+	##PRESERVE## # check if cache exists and we want to make it
+	##PRESERVE## if [[ -f ${cache_fname} && "$ROOT_FS_CREATE_ONLY" == "yes" ]]; then
+	##PRESERVE## 	display_alert "Checking cache integrity" "$display_name" "info"
+	##PRESERVE## 	zstd -tqq ${cache_fname} || {
+	##PRESERVE## 		rm $cache_fname
+	##PRESERVE## 		exit_with_error "Cache $cache_fname is corrupted and was deleted. Please restart!"
+	##PRESERVE## 	}
+	##PRESERVE## fi
 
 	# if aria2 file exists download didn't succeeded
-	if [[ -f $cache_fname && ! -f $cache_fname.aria2 ]]; then
+	if [[ "$ROOT_FS_CREATE_ONLY" != "yes" && -f $cache_fname && ! -f $cache_fname.aria2 ]]; then
 
 		local date_diff=$((($(date +%s) - $(stat -c %Y $cache_fname)) / 86400))
-		display_alert "Extracting $display_name" "$date_diff days old" "info"
-		pv -p -b -r -c -N "$(logging_echo_prefix_for_pv "extract_rootfs") $display_name" "$cache_fname" | zstdmt -dc | tar xp --xattrs -C $SDCARD/
+		display_alert "Extracting $cache_name" "$date_diff days old" "info"
+		pv -p -b -r -c -N "$(logging_echo_prefix_for_pv "extract_rootfs") $cache_name" "$cache_fname" | zstdmt -dc | tar xp --xattrs -C $SDCARD/
 		[[ $? -ne 0 ]] && rm $cache_fname && exit_with_error "Cache $cache_fname is corrupted and was deleted. Restart."
 		rm $SDCARD/etc/resolv.conf
 		echo "nameserver $NAMESERVER" >> $SDCARD/etc/resolv.conf
 		create_sources_list "$RELEASE" "$SDCARD/"
 	else
+		local ROOT_FS_CREATE_VERSION=${ROOT_FS_CREATE_VERSION:-$(date --utc +"%Y%m%d")}
+		local cache_name=${ARCH}-${RELEASE}-${cache_type}-${packages_hash}-${ROOT_FS_CREATE_VERSION}.tar.zst
+		local cache_fname=${SRC}/cache/rootfs/${cache_name}
+
 		display_alert "Creating new rootfs cache for" "$RELEASE" "info"
 
 		create_new_rootfs_cache
@@ -216,7 +203,7 @@ function create_new_rootfs_cache() {
 	fi
 
 	# stage: check md5 sum of installed packages. Just in case.
-	display_alert "Check MD5 sum of installed packages" "info"
+	display_alert "Checking MD5 sum of installed packages" "debsums" "info"
 	export if_error_detail_message="Check MD5 sum of installed packages failed"
 	# shellcheck disable=SC2154 # this '$' and '\n' syntax is for dpkg-query
 	chroot_sdcard dpkg-query -f '"${binary:Package}\n"' -W "|" xargs debsums --silent || true # @TODO: ignore result for now until we can find all the divergences
@@ -242,7 +229,7 @@ function create_new_rootfs_cache() {
 		display_alert "Mount point" "$(echo -e "$freespace" | grep $MOUNT | head -1 | awk '{print $5}')" "info"
 
 	# create list of installed packages for debug purposes - this captures it's own stdout.
-	chroot "${SDCARD}" /bin/bash -c "dpkg --get-selections" | grep -v deinstall | awk '{print $1}' | cut -f1 -d':' > "${cache_fname}.list"
+	chroot "${SDCARD}" /bin/bash -c "dpkg -l | grep ^ii | awk '{ print \$2\",\"\$3 }' > '${cache_fname}.list'"
 
 	# creating xapian index that synaptic runs faster
 	if [[ $BUILD_DESKTOP == yes ]]; then
@@ -262,7 +249,7 @@ function create_new_rootfs_cache() {
 	umount_chroot "$SDCARD"
 
 	tar cp --xattrs --directory=$SDCARD/ --exclude='./dev/*' --exclude='./proc/*' --exclude='./run/*' --exclude='./tmp/*' \
-		--exclude='./sys/*' --exclude='./home/*' --exclude='./root/*' . | pv -p -b -r -s "$(du -sb $SDCARD/ | cut -f1)" -N "$(logging_echo_prefix_for_pv "store_rootfs") $display_name" | zstdmt -5 -c > "${cache_fname}"
+		--exclude='./sys/*' --exclude='./home/*' --exclude='./root/*' . | pv -p -b -r -s "$(du -sb $SDCARD/ | cut -f1)" -N "$(logging_echo_prefix_for_pv "store_rootfs") $cache_name" | zstdmt -5 -c > "${cache_fname}"
 
 	# sign rootfs cache archive that it can be used for web cache once. Internal purposes
 	if [[ -n "${GPG_PASS}" && "${SUDO_USER}" ]]; then
@@ -270,23 +257,43 @@ function create_new_rootfs_cache() {
 		echo "${GPG_PASS}" | sudo -H -u ${SUDO_USER} bash -c "gpg --passphrase-fd 0 --armor --detach-sign --pinentry-mode loopback --batch --yes ${cache_fname}" || exit 1
 	fi
 
+	# needed for backend to keep current only
+	echo "$cache_fname" > $cache_fname.current
+
 	return 0 # protect against possible future short-circuiting above this
 }
 
 # get_package_list_hash
 #
 # returns md5 hash for current package list and rootfs cache version
-get_package_list_hash() {
+get_package_list_hash()
+{
 	local package_arr exclude_arr
 	local list_content
 	read -ra package_arr <<< "${DEBOOTSTRAP_LIST} ${PACKAGE_LIST}"
 	read -ra exclude_arr <<< "${PACKAGE_LIST_EXCLUDE}"
 	(
-		(
-			printf "%s\n" "${package_arr[@]}"
-			printf -- "-%s\n" "${exclude_arr[@]}"
-		) | sort -u
-		echo "${1}"
-	) |
-		md5sum | cut -d' ' -f 1
+		printf "%s\n" "${package_arr[@]}"
+		printf -- "-%s\n" "${exclude_arr[@]}"
+	) | sort -u | md5sum | cut -d' ' -f 1
+}
+
+# get_rootfs_cache_list <cache_type> <packages_hash>
+#
+# return a list of versions of all avaiable cache from remote and local.
+get_rootfs_cache_list() {
+	local cache_type=$1
+	local packages_hash=$2
+
+	{
+		# Temportally disable Github API because we don't support to download from it
+		# curl --silent --fail -L "https://api.github.com/repos/armbian/cache/releases?per_page=3" | jq -r '.[].tag_name' \
+		# || curl --silent --fail -L https://cache.armbian.com/rootfs/list
+		curl --silent --fail -L https://cache.armbian.com/rootfs/list
+
+		find ${SRC}/cache/rootfs/ -mtime -7 -name "${ARCH}-${RELEASE}-${cache_type}-${packages_hash}-*.tar.zst" |
+			sed -e 's#^.*/##' |
+			sed -e 's#\..*$##' |
+			awk -F'-' '{print $5}'
+	} | sort | uniq
 }

@@ -75,11 +75,15 @@ create_image_from_sdcard_rootfs() {
 		Called before unmounting both `/root` and `/boot`.
 	PRE_UMOUNT_FINAL_IMAGE
 
+	# Check the partition table after the uboot code has been written
+	display_alert "nPartition table after write_uboot" "$LOOP" "debug"
+	run_host_command_logged sfdisk -l "${LOOP}" # @TODO: use asset..
+
 	# unmount /boot/efi first, then /boot, rootfs third, image file last
 	sync
 	[[ $UEFISIZE != 0 ]] && umount "${MOUNT}${UEFI_MOUNT_POINT}"
 	[[ $BOOTSIZE != 0 ]] && umount "${MOUNT}/boot"
-	[[ $ROOTFS_TYPE != nfs ]] && umount "${MOUNT}"
+	umount "${MOUNT}"
 	[[ $CRYPTROOT_ENABLE == yes ]] && cryptsetup luksClose $ROOT_MAPPER
 
 	umount_chroot_recursive "${MOUNT}" # @TODO: wait. NFS is not really unmounted above.
